@@ -54,6 +54,21 @@ var path_map; // Map containing the traversable paths that the line can make.
 var found_path; // Path from the starting point to the bead that is closest to the mouse position.
 
 var debug_mode = false; // Enable this to see the navigation map, not the final colors.
+var puzzle_solved = false; // Did player find the solution?
+
+var audio_options = {
+	lock: true,
+	path: "audio/",
+	fileTypes: ["mp3"],
+	onLoad: audioLoaded
+}
+
+var fx_PuzzleStart = PS.audioLoad("PuzzleStart", audio_options); // audio_channels["PuzzleStart"]
+var fx_PuzzleAbort = PS.audioLoad("PuzzleAbort", audio_options); // audio_channels["PuzzleAbort"]
+var fx_PuzzleFail = PS.audioLoad("PuzzleFail", audio_options); // audio_channels["PuzzleFail"]
+var fx_PuzzleSuccess = PS.audioLoad("PuzzleSuccess", audio_options); // audio_channels["PuzzleSuccess"]
+
+var audio_channels = {}
 
 /* A Cell is a position on the grid. */
 function Cell(x, y)
@@ -161,21 +176,32 @@ PS.touch = function(x, y, data, options)
 	// Player starts drawing a line. Or stops, if it's already doing so.
 	if(x === starting_point.x && y === starting_point.y)
 	{
-		is_player_drawing_line = true
+		enableColorFade(false);
+		is_player_drawing_line = true;
 		PS.color(x, y, line_color);
 		line[0] = [starting_point.x, starting_point.y];
+		PS.audioPlayChannel(audio_channels["PuzzleStart"]);
 	}
 	else
 	{
 		is_player_drawing_line = false;
 	}
 
-	// TO DO: Empty line cells, not ALL cells.
 	if(!is_player_drawing_line)
 	{
-		// TO DO: Change to empty color slowly.
-		clearLine()
-		clearGrid()
+		puzzle_solved = checkWinningCondition()
+
+		if(puzzle_solved)
+		{
+			// Next puzzle. Also, let player know he won.
+		}
+		else
+		{
+			// TO DO: Change to empty color slowly.
+			clearLine()
+			clearGrid(true) // with_fade = true
+			PS.audioPlayChannel(audio_channels["PuzzleAbort"]);
+		}
 	}
 };
 
@@ -240,29 +266,30 @@ PS.enter = function(x, y, data, options)
 
 		for(var i = 0; i < found_path.length; i++)
 		{
-			var new_point = [found_path[i][0], found_path[i][1]];
-			var index = getFirstOccurrenceInArray(new_point, line);
+			var next_bead = [found_path[i][0], found_path[i][1]];
+			var index = getFirstOccurrenceInArray(next_bead, line);
 
 			if(index < 0)
 			{
-				line.push(new_point);
+				line.push(next_bead);
 			}
 			else
 			{
 				var line_copy = [];
 
-				for(var i = 0; i <= index; i++)
+				for(var j = 0; j <= index; j++)
 				{
-					line_copy.push(line[i]);
+					line_copy.push(line[j]);
 				}
 
 				line = line_copy;
 			}
 		}
 
-		PS.debugClear();
-		PS.debug("FOUND_PATH: [" + found_path + "]\n");
-		PS.debug("LINE: [" + line + "]\n");
+		//PS.debugClear();
+		//PS.debug("FOUND_PATH: [" + found_path + "]\n");
+		//PS.debug("LINE: [" + line + "]\n");
+		//PS.debug("LINE_COPY: [" + line_copy + "]\n");
 		//PS.debug("LINE_LENGTH: [" + line.length + "]\n");
 
 		for(var i = 0; i < line.length; i++)
@@ -491,8 +518,10 @@ function clearLine()
 	line = [];
 }
 
-function clearGrid()
+function clearGrid(with_fade = false)
 {
+	enableColorFade(with_fade)
+
 	if(!debug_mode)
 	{
 		//PS.debug(map_path + "\n");
@@ -536,4 +565,50 @@ function getFirstOccurrenceInArray(value, array)
 	}
 
 	return index;
+}
+
+function checkWinningCondition()
+{
+	// PS.debugClear();
+	var won = false;
+
+	if(line.length > 0)
+	{
+		var line_start = new Cell(line[0][0], line[0][1]);
+		var line_end = new Cell(line[line.length - 1][0], line[line.length - 1][1]);
+
+		// PS.debug("LINE_START: " + line_start.x + "," + line_start.y + "\n");
+		// PS.debug("LINE_END: " + line_end.x + "," + line_end.y + "\n");
+		// PS.debug("START: " + starting_point.x + "," + starting_point.y + "\n");
+		// PS.debug("END: " + ending_point.x + "," + ending_point.y + "\n");
+
+		if(line_start.x === starting_point.x && line_start.y === starting_point.y
+			&& line_end.x === ending_point.x && line_end.y === ending_point.y)
+		{
+			won = true;
+			PS.audioPlayChannel(audio_channels["PuzzleSuccess"]);
+		}
+	}
+	// TO DO: when player is able to fail giving a solution, do PS.audioPlayChannel(audio_channels["PuzzleFail"]);
+
+	// PS.debug("WIN: " + won + "\n");
+
+	return won;
+}
+
+function audioLoaded(audio_object)
+{
+	audio_channels[audio_object.name] = audio_object.channel
+}
+
+function enableColorFade(fade_enabled)
+{
+	if(fade_enabled)
+	{
+		PS.fade(PS.ALL, PS.ALL, 180);
+	}
+	else
+	{
+		PS.fade(PS.ALL, PS.ALL, 1);
+	}
 }
