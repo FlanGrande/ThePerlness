@@ -35,7 +35,6 @@ You may find them useful if your development environment is configured to suppor
 If you don't use JSHint (or are using it with a configuration file), you can safely delete these lines.
 */
 
-/* jshint browser : true, devel : true, esversion : 5, freeze : true */
 /* globals PS : true */
 
 var is_player_drawing_line = false; // Is the player actively drawing a line?
@@ -48,28 +47,7 @@ var level_options = {
 	empty_color: 0x004D1A, //traversable_bead_color
 	starting_point_color: PS.COLOR_BLUE,
 	ending_point_color: PS.COLOR_ORANGE
-}
-
-var grid_image; // Image object that contains the initial state of the grid.
-var path_map; // Map containing the traversable paths that the line can make.
-var found_path; // Path from the starting point to the bead that is closest to the mouse position.
-
-var debug_mode = false; // Enable this to see the navigation map, not the final colors.
-var puzzle_solved = false; // Did player find the solution?
-
-var audio_options = {
-	lock: true,
-	path: "audio/",
-	fileTypes: ["mp3"],
-	onLoad: audioLoaded
-}
-
-var fx_PuzzleStart = PS.audioLoad("PuzzleStart", audio_options); // audio_channels["PuzzleStart"]
-var fx_PuzzleAbort = PS.audioLoad("PuzzleAbort", audio_options); // audio_channels["PuzzleAbort"]
-var fx_PuzzleFail = PS.audioLoad("PuzzleFail", audio_options); // audio_channels["PuzzleFail"]
-var fx_PuzzleSuccess = PS.audioLoad("PuzzleSuccess", audio_options); // audio_channels["PuzzleSuccess"]
-
-var audio_channels = {}
+};
 
 /* A Cell is a position on the grid. */
 function Cell(x, y)
@@ -78,13 +56,44 @@ function Cell(x, y)
 	this.y = y;
 }
 
+/* A Polygon shape in the grid. */
+function Polygon(array_of_points)
+{
+	this.shape = array_of_points;
+}
+
+var grid_image; // Image object that contains the initial state of the grid.
+var path_map; // Map containing the traversable paths that the line can make.
+var edges_path_map; // Map containing only the traversable paths in the edges of the grid.
+var found_path; // Path from the starting point to the bead that is closest to the mouse position.
+
+
+
+var debug_mode = false; // Enable this to see the navigation map, not the final colors.
+var puzzle_solved = false; // Did player find the solution?
+var polygons_made_by_line = []; // Array containing the polygons drawn by the line given as a solution.
+
+var audio_options = {
+	lock: true,
+	path: "audio/",
+	fileTypes: ["mp3"],
+	onLoad: audioLoaded
+};
+
+var fx_PuzzleStart = PS.audioLoad("PuzzleStart", audio_options); // audio_channels["PuzzleStart"]
+var fx_PuzzleAbort = PS.audioLoad("PuzzleAbort", audio_options); // audio_channels["PuzzleAbort"]
+var fx_PuzzleFail = PS.audioLoad("PuzzleFail", audio_options); // audio_channels["PuzzleFail"]
+var fx_PuzzleSuccess = PS.audioLoad("PuzzleSuccess", audio_options); // audio_channels["PuzzleSuccess"]
+
+var audio_channels = {};
+
 var starting_point = new Cell(0, 4);
 var ending_point = new Cell(4, 0);
 
 var line = []; // This is an array of cells that describe the line that has been drawn so far.
 
 var level_id = 1;
-var current_level = loadLevel(1);
+var current_level;
 
 
 /*
@@ -118,14 +127,16 @@ PS.init = function(system, options)
 	// Uncomment the following code line and change
 	// the x and y parameters as needed.
 
-	PS.gridSize(current_level.width, current_level.height);
-	PS.gridColor(current_level.options().background_color); // set background color to dark gray.
+	// PS.gridSize(current_level.width, current_level.height);
+	// PS.gridColor(current_level.options().background_color); // set background color to dark gray.
 
 	// This is also a good place to display
 	// your game title or a welcome message
 	// in the status line above the grid.
 	// Uncomment the following code line and
 	// change the string parameter as needed.
+
+	current_level = new Level(level_id);
 
 	PS.statusText("Witness Me");
 	//PS.statusText("Witness Me " + level_id);
@@ -139,6 +150,7 @@ PS.init = function(system, options)
 	//PS.scale(starting_point.x, starting_point.y, 0.5);
 	//PS.bgColor(starting_point.x, starting_point.y, 0xFF0000);
 
+	edges_path_map = calculateEdgeMap();
 	path_map = calculateMap();
 	clearGrid();
 };
@@ -171,31 +183,33 @@ PS.touch = function(x, y, data, options)
 	// Add code here for mouse clicks/touches
 	// over a bead.
 
-	// Player starts drawing a line. Or stops, if it's already doing so.
+	// Does Player start drawing a line?
 	if(x === current_level.starting_point.x && y === current_level.starting_point.y && !is_player_drawing_line)
 	{
 		enableColorFade(false);
 		is_player_drawing_line = true;
 		PS.color(x, y, current_level.options().line_color);
 		line[0] = [current_level.starting_point.x, current_level.starting_point.y];
-		PS.audioPlayChannel(audio_channels["PuzzleStart"]);
+		PS.audioPlayChannel(audio_channels.PuzzleStart);
 	}
 	else
-	{
+	{ 
+		// Or stops, if it's already doing so.
 		is_player_drawing_line = false;
 	}
 
+	// After stopping, check if a valid solution was given.
 	if(!is_player_drawing_line)
 	{
-		if(checkWinningCondition())
+		if(x === current_level.ending_point.x && y === current_level.ending_point.y && new Solution(line, current_level).checkWinningCondition())
 		{
 			nextLevel();
 		}
 		else
 		{
-			clearLine()
-			clearGrid(true) // with_fade = true
-			PS.audioPlayChannel(audio_channels["PuzzleAbort"]);
+			clearLine();
+			clearGrid(true); // with_fade = true
+			PS.audioPlayChannel(audio_channels.PuzzleAbort);
 		}
 	}
 };
@@ -255,7 +269,7 @@ PS.enter = function(x, y, data, options)
 		clearGrid();
 
 		PS.color(current_level.starting_point.x, current_level.starting_point.y, current_level.options().line_color);
-		found_path = calculatePath(line[line.length - 1][0], line[line.length - 1][1], x, y);
+		found_path = calculatePath(path_map, line[line.length - 1][0], line[line.length - 1][1], x, y);
 
 		// This loop makes the line not break and calculate the path to the cursor as we draw a line.
 		for(var i = 0; i < found_path.length; i++)
@@ -263,6 +277,7 @@ PS.enter = function(x, y, data, options)
 			var next_bead = [found_path[i][0], found_path[i][1]];
 			var index = getFirstOccurrenceInArray(next_bead, line);
 
+			// index < 0 means is not already in.
 			if(index < 0)
 			{
 				line.push(next_bead);
@@ -286,9 +301,11 @@ PS.enter = function(x, y, data, options)
 		//PS.debug("LINE_COPY: [" + line_copy + "]\n");
 		//PS.debug("LINE_LENGTH: [" + line.length + "]\n");
 
-		for(var i = 0; i < line.length; i++)
+		// Draw the line. Hide glyphs (like hexagonDots) if necessary.
+		for(var i2 = 0; i2 < line.length; i2++)
 		{
-			PS.color(line[i][0], line[i][1], current_level.options().line_color);
+			PS.color(line[i2][0], line[i2][1], current_level.options().line_color);
+			PS.glyphAlpha(line[i2][0], line[i2][1], 0);
 		}
 	}
 
@@ -467,6 +484,38 @@ function isBeadTraversable(x, y)
 	return can_be_fill;
 }
 
+function calculateEdgeMap()
+{
+	// First we create a map from the traversable beads.
+	for(var i = 0; i < current_level.width; i++)
+	{
+		for(var j = 0; j < current_level.height; j++)
+		{
+			if(isPositionOnEdge([i, j]))
+			{
+				PS.color(i, j, PS.COLOR_WHITE);
+			}
+			else
+			{
+				PS.color(i, j, PS.COLOR_BLACK);
+			}
+		}
+	}
+
+	// We capture the current grid in order to create a map.
+	grid_image = PS.imageCapture(1);
+	grid_image.pixelSize = 1;
+	// PS.debug(grid_image.source + "\n");
+	// PS.debug(grid_image.id + "\n");
+	// PS.debug(grid_image.width + "\n");
+	// PS.debug(grid_image.height + "\n");
+	// PS.debug(grid_image.pixelSize + "\n");
+	//PS.debug("GRID DATA: " + grid_image.data + "\n");
+
+	// Calculate map and return its ID string.
+	return PS.pathMap(grid_image);
+}
+
 function calculateMap()
 {
 	// First we create a map from the traversable beads.
@@ -496,16 +545,16 @@ function calculateMap()
 	//PS.debug("GRID DATA: " + grid_image.data + "\n");
 
 	// Calculate map and return its ID string.
-	return PS.pathMap(grid_image);;
+	return PS.pathMap(grid_image);
 }
 
-function calculatePath(start_x, start_y, target_x, target_y)
+function calculatePath(map, start_x, start_y, target_x, target_y)
 {
 	// PS.debug("PATH_MAP_ID: " + path_map + "\n");
 	// PS.debug("START: [" + start_x + ", " + start_y + "]\n");
 	// PS.debug("TARGET: [" + target_x + ", " + target_y + "]\n");
 	var options = {"no_diagonals": true};
-	return PS.pathFind(path_map, start_x, start_y, target_x, target_y, options);
+	return PS.pathFind(map, start_x, start_y, target_x, target_y, options);
 }
 
 function clearLine()
@@ -515,11 +564,12 @@ function clearLine()
 
 function clearGrid(with_fade = false)
 {
-	enableColorFade(with_fade)
+	enableColorFade(with_fade);
 
 	if(!debug_mode)
 	{
 		//PS.debug(map_path + "\n");
+		PS.glyphAlpha(PS.ALL, PS.ALL, 255);
 
 		// Next, we color the map, as we want it the player to see.
 		for(var i = 0; i < current_level.width; i++)
@@ -562,39 +612,10 @@ function getFirstOccurrenceInArray(value, array)
 	return index;
 }
 
-function checkWinningCondition()
-{
-	// PS.debugClear();
-	var won = false;
-
-	if(line.length > 0)
-	{
-		var line_start = new Cell(line[0][0], line[0][1]);
-		var line_end = new Cell(line[line.length - 1][0], line[line.length - 1][1]);
-
-		// PS.debug("LINE_START: " + line_start.x + "," + line_start.y + "\n");
-		// PS.debug("LINE_END: " + line_end.x + "," + line_end.y + "\n");
-		// PS.debug("START: " + starting_point.x + "," + starting_point.y + "\n");
-		// PS.debug("END: " + ending_point.x + "," + ending_point.y + "\n");
-
-		if(line_start.x === current_level.starting_point.x && line_start.y === current_level.starting_point.y
-			&& line_end.x === current_level.ending_point.x && line_end.y === current_level.ending_point.y)
-		{
-			won = true;
-			PS.audioPlayChannel(audio_channels["PuzzleSuccess"]);
-		}
-	}
-	// TO DO: when player is able to fail giving a solution, do PS.audioPlayChannel(audio_channels["PuzzleFail"]);
-
-	// PS.debug("WIN: " + won + "\n");
-
-	return won;
-}
-
 // This function should be ran whenever an Audio is loaded.
 function audioLoaded(audio_object)
 {
-	audio_channels[audio_object.name] = audio_object.channel
+	audio_channels[audio_object.name] = audio_object.channel;
 }
 
 function enableColorFade(fade_enabled)
@@ -609,54 +630,8 @@ function enableColorFade(fade_enabled)
 	}
 }
 
-function loadLevel(id)
-{
-	switch(id)
-	{
-		case 1:
-			// Level 1
-			return new Level(5, 5, new Cell(0, 4), new Cell(4, 0));
-			break;
-		case 2:
-			// Level 2
-			var level_options = {
-				background_color: 0x00C942,
-				traversable_bead_color: 0x004D1A,
-				non_traversable_bead_color: 0x00C942, //background_color
-				line_color: 0xA5FC14,
-				empty_color: 0x004D1A, //traversable_bead_color
-				starting_point_color: PS.COLOR_BLUE,
-				ending_point_color: PS.COLOR_ORANGE
-			}
-
-			var level_to_return = new Level(5, 5, new Cell(0, 4), new Cell(4, 0), level_options);
-			//level_to_return.addPuzzleWidget(x, y, type);
-
-			return level_to_return;
-			break;
-		case 3:
-			// Level 3
-			var level_options = {
-				background_color: 0x00C942,
-				traversable_bead_color: 0x004D1A,
-				non_traversable_bead_color: 0x00C942, //background_color
-				line_color: 0xA5FC14,
-				empty_color: 0x004D1A, //traversable_bead_color
-				starting_point_color: PS.COLOR_BLUE,
-				ending_point_color: PS.COLOR_ORANGE
-			}
-			return new Level(7, 7, new Cell(0, 6), new Cell(6, 0), level_options);
-			break;
-		default:
-			level_id = 1;
-			return new Level(5, 5, new Cell(0, 4), new Cell(4, 0)); // Load Level 1 by default.
-	}
-}
-
 function nextLevel()
 {
-	PS.debug(level_id);
 	level_id++;
-	current_level = loadLevel(level_id);
 	PS.init();
 }
